@@ -19,6 +19,7 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "absl/log/log.h"
 #include "llvm/ADT/StringRef.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/Pass/Pass.h"  // from @llvm-project
@@ -262,6 +263,11 @@ void AddPostQuantizationStableHloToTfPasses(
 
   if (pass_config.enable_composite_direct_lowering) {
     pass_manager.addPass(mlir::odml::CreateCompositeLoweringPass());
+  }
+
+  if (pass_config.enable_pytorch_passes) {
+    LOG(WARNING) << "Running the PyTorch passes in the tflite converter is not "
+                    "implemented yet.";
   }
 
   // TFLite dialect passes.

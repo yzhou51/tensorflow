@@ -600,6 +600,7 @@ def build_conversion_flags(
     qdq_conversion_mode=None,
     disable_per_channel_quantization_for_dense_layers=False,
     enable_composite_direct_lowering=False,
+    enable_pytorch_passes=False,
     **_,
 ):
   """Builds protocol buffer describing a conversion of a model.
@@ -731,6 +732,8 @@ def build_conversion_flags(
       layers. The flag works only for integer quantized model.
     enable_composite_direct_lowering: If set, attempts to lower composite ops
       directly to tflite ops.
+    enable_pytorch_passes: If set, enables the passes that are required when the
+      tflite converter is being called by `ai_edge_torch.convert`.
 
   Returns:
     conversion_flags: protocol buffer describing the conversion process.
@@ -854,6 +857,7 @@ def build_conversion_flags(
   conversion_flags.enable_composite_direct_lowering = (
       enable_composite_direct_lowering
   )
+  conversion_flags.enable_pytorch_passes = enable_pytorch_passes
   return conversion_flags
 
 

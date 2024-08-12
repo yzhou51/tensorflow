@@ -98,6 +98,9 @@ struct PassConfig {
 
   // Enables the attempt to directly lower composites into tflite ops.
   bool enable_composite_direct_lowering = true;
+
+  // Enables the passes required by the pytorch converter.
+  bool enable_pytorch_passes = false;
 };
 
 inline llvm::raw_ostream& operator<<(llvm::raw_ostream& os,

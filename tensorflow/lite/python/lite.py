@@ -674,6 +674,7 @@ class TFLiteConverterBase:
     self._experimental_qdq_conversion_mode = None
     self._experimental_disable_per_channel_quantization_for_dense_layers = False
     self._experimental_enable_composite_direct_lowering = False
+    self.enable_pytorch_passes = False
 
     # Debug parameters
     self.ir_dump_dir = None
@@ -836,6 +837,7 @@ class TFLiteConverterBase:
         "enable_composite_direct_lowering": (
             self._experimental_enable_composite_direct_lowering
         ),
+        "enable_pytorch_passes": self.enable_pytorch_passes,
     }
 
     if self.saved_model_dir:
