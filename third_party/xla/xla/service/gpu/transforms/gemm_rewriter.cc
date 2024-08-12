@@ -1072,7 +1072,9 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
       }
     }
 
-    absl::Span<const int64_t> batch_dims =
+    absl::Span<const int64_t> a_batch_dims =
+        gemm_backend_config.dot_dimension_numbers().lhs_batch_dimensions();
+    absl::Span<const int64_t> b_batch_dims =
         gemm_backend_config.dot_dimension_numbers().rhs_batch_dimensions();
 
     // cuBLASLt FP8 GEMM kernels require the scaling factors to be in F32
@@ -1143,13 +1145,13 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
                                    : a.commutative_ops.back().first)
                     ->shape()
                     .dimensions_size() -
-                batch_dims.size() !=
+                a_batch_dims.size() !=
             2 ||
         (b.commutative_ops.empty() ? b.fp8_input
                                    : b.commutative_ops.back().first)
                     ->shape()
                     .dimensions_size() -
-                batch_dims.size() !=
+                b_batch_dims.size() !=
             2) {
       VLOG(1) << "Failed to rewrite " << instr->ToShortString()
               << "into FP8 Custom Call. A and B must have one non-contracting "
@@ -1207,7 +1209,7 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
 
     DotDimensionNumbers *dim_nums =
         gemm_backend_config.mutable_dot_dimension_numbers();
-    int batch_dim_offset = batch_dims.size();
+    const size_t num_batch_dims = a_batch_dims.size();
 
     // cuBLASLt FP8 GEMM kernels currently require the first operand, i.e. A, to
     // be row-major. If A is column-major, swap the contracting and
@@ -1215,34 +1217,37 @@ class GemmRewriterVisitor : public DfsHloRewriteVisitor {
     // column-major.
     // TODO(philipphack): Remove once cuBLASLt supports A being column-major
     if (gemm_config.lhs_layout.order == MatrixLayout::Order::kColumnMajor) {
-      CHECK(a_contracting_dims[0] == batch_dim_offset ||
-            a_contracting_dims[0] == batch_dim_offset + 1);
-      if (a_contracting_dims[0] == batch_dim_offset) {
-        dim_nums->set_lhs_contracting_dimensions(0, batch_dim_offset + 1);
+      CHECK(a_contracting_dims[0] == num_batch_dims ||
+            a_contracting_dims[0] == num_batch_dims + 1);
+      if (a_contracting_dims[0] == num_batch_dims) {
+        dim_nums->set_lhs_contracting_dimensions(0, num_batch_dims + 1);
       } else {
-        dim_nums->set_lhs_contracting_dimensions(0, batch_dim_offset);
+        dim_nums->set_lhs_contracting_dimensions(0, num_batch_dims);
       }
       a.fp8_input =
-          TransposeMatrix(a.fp8_input, a_contracting_dims[0], batch_dims);
+          TransposeMatrix(a.fp8_input, a_contracting_dims[0], a_batch_dims);
     }
 
     // Similarly, cuBLASLt requires the second operand to be column-major, so
     // make it column-major if it is currently row-major.
     if (gemm_config.rhs_layout.order == MatrixLayout::Order::kRowMajor) {
-      CHECK(b_contracting_dims[0] == batch_dim_offset ||
-            b_contracting_dims[0] == batch_dim_offset + 1);
-      if (b_contracting_dims[0] == batch_dim_offset) {
-        dim_nums->set_rhs_contracting_dimensions(0, batch_dim_offset + 1);
+      CHECK(b_contracting_dims[0] == num_batch_dims ||
+            b_contracting_dims[0] == num_batch_dims + 1);
+      if (b_contracting_dims[0] == num_batch_dims) {
+        dim_nums->set_rhs_contracting_dimensions(0, num_batch_dims + 1);
       } else {
-        dim_nums->set_rhs_contracting_dimensions(0, batch_dim_offset);
+        dim_nums->set_rhs_contracting_dimensions(0, num_batch_dims);
       }
       b.fp8_input =
-          TransposeMatrix(b.fp8_input, b_contracting_dims[0], batch_dims);
+          TransposeMatrix(b.fp8_input, b_contracting_dims[0], b_batch_dims);
     }
 
-    a.fp8_input = PadOperandToMultipleOf16(batch_dims, a.fp8_input);
-    b.fp8_input = PadOperandToMultipleOf16(batch_dims, b.fp8_input);
-    Shape new_output_shape = PadShapeToMultipleOf16(instr->shape(), batch_dims);
+    a.fp8_input = PadOperandToMultipleOf16(a_batch_dims, a.fp8_input);
+    b.fp8_input = PadOperandToMultipleOf16(b_batch_dims, b.fp8_input);
+    std::vector<int64_t> out_batch_dims(num_batch_dims);
+    std::iota(out_batch_dims.begin(), out_batch_dims.end(), 0);
+    Shape new_output_shape =
+        PadShapeToMultipleOf16(instr->shape(), out_batch_dims);
 
     std::vector<HloInstruction *> operands_list = {
         a.fp8_input, b.fp8_input, scales_f32[0], scales_f32[1], one, one};
