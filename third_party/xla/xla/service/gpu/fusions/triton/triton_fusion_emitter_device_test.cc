@@ -607,6 +607,59 @@ ENTRY entry {
                                "(compute capability 8.0) and up, but got")));
 }
 
+TEST_F(TritonEmitterTest,
+       EmitterFailsIfFusionBackendConfigDoesNotSatisfyConstraints) {
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<VerifiedHloModule> hlo_module,
+                          ParseAndReturnVerifiedModule(R"(
+HloModule m
+
+max_computation {
+  param_0 = f32[] parameter(0)
+  param_1 = f32[] parameter(1)
+  ROOT maximum = f32[] maximum(param_0, param_1)
+}
+
+fused_computation {
+  param_0 = f32[8192,50304] parameter(0)
+  constant = f32[] constant(-inf)
+  reduce = f32[8192] reduce(param_0, constant), dimensions={1}, to_apply=max_computation
+  broadcast = f32[8192,50304] broadcast(reduce), dimensions={0}
+  ROOT subtract = f32[8192,50304] subtract(param_0, broadcast)
+}
+
+ENTRY entry_computation {
+  param_0 = f32[8192,50304] parameter(0)
+  ROOT fusion = f32[8192,50304] fusion(param_0), 
+    kind=kCustom, calls=fused_computation, 
+    backend_config={"fusion_backend_config": {
+      "kind":"__triton",
+      "block_level_fusion_config": {"output_tile_sizes": ["1024","1"],
+                                    "num_warps": "1"}}}
+})"));
+  const HloFusionInstruction* triton_fusion = Cast<HloFusionInstruction>(
+      hlo_module->entry_computation()->root_instruction());
+
+  auto compute_capability =
+      se::CudaComputeCapability{se::CudaComputeCapability::HOPPER, /*minor=*/0};
+  const se::DeviceDescription dev_info =
+      TestGpuDeviceInfo::RTXA6000DeviceInfo(compute_capability);
+  llvm::LLVMContext llvm_ctx;
+  llvm::Module llvm_module("module", llvm_ctx);
+  mlir::MLIRContext mlir_context;
+
+  BlockLevelParameters block_level_parameters;
+  block_level_parameters.output_tile_sizes = {1024, 1};
+  block_level_parameters.num_warps = 1;
+
+  EXPECT_THAT(
+      TritonWrapper("test_fn", triton_fusion, compute_capability, dev_info,
+                    block_level_parameters, &llvm_module, mlir_context),
+      tsl::testing::StatusIs(
+          absl::StatusCode::kInvalidArgument,
+          ::testing::HasSubstr("Tile parameters 1024, 1 do not satisfy the "
+                               "SymbolicTileAnalysis's constraints.")));
+}
+
 // TODO(b/353484968): Tests that don't run RunAndCompareNoHloPasses should be
 // moved to deviceless test file.
 TEST_F(TritonEmitterTest, TestGenericEmitterReductionFusion) {

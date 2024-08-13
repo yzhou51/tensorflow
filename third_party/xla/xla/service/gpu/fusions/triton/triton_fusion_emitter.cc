@@ -122,6 +122,7 @@ limitations under the License.
 #include "xla/service/gpu/model/symbolic_tile_analysis.h"
 #include "xla/service/gpu/model/tiled_hlo_computation.h"
 #include "xla/service/gpu/model/tiled_hlo_instruction.h"
+#include "xla/service/gpu/model/triton_fusion_constraints.h"
 #include "xla/service/gpu/target_util.h"
 #include "xla/service/gpu/triton_fusion_analysis.h"
 #include "xla/service/gpu/triton_tiling_propagation.h"
@@ -2704,8 +2705,9 @@ absl::Status EmitGeneric(mlir::OpBuilder builder,
                          const BlockLevelParameters& block_level_parameters) {
   const HloComputation* computation = fusion->fused_instructions_computation();
   SymbolicTileAnalysisOrError symbolic_tile_analysis_or =
-      SymbolicTileAnalysis::AnalyzeComputation(*computation,
-                                               builder.getContext());
+      SymbolicTileAnalysis::AnalyzeComputation(
+          *computation, builder.getContext(),
+          TritonFusionConstraints::GetBuilder());
   if (std::holds_alternative<FusionDecision>(symbolic_tile_analysis_or)) {
     return Internal(
         "Unsupported fusion in EmitGeneric: %s",
