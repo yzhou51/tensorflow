@@ -779,6 +779,24 @@ func.func @cast_ui8_to_i1() -> tensor<4xi1> {
 // CHECK:  return %[[CST]]
 }
 
+// CHECK-LABEL: @cast_f32_to_i32
+func.func @cast_f32_to_i32() -> tensor<8xi32> {
+  %cst = arith.constant dense<[-1.0, 0.0, 1.5, 0.99, 1.175494351e-38, 3.402823466e+38, -3.402823466e+38, -1.175494351e-38]> : tensor<8xf32>
+  %0 = "tfl.cast"(%cst) : (tensor<8xf32>) -> tensor<8xi32>
+  func.return %0 : tensor<8xi32>
+}
+
+// CHECK: %cst = arith.constant dense<[-1, 0, 1, 0, 0, 2147483647, -2147483648, 0]> : tensor<8xi32>
+
+// CHECK-LABEL: @cast_i32_to_f32
+func.func @cast_i32_to_f32() -> tensor<5xf32> {
+  %cst = arith.constant dense<[-1, 0, 2, 2147483647, -2147483648]> : tensor<5xi32>
+  %0 = "tfl.cast"(%cst) : (tensor<5xi32>) -> tensor<5xf32>
+  func.return %0 : tensor<5xf32>
+}
+
+// CHECK: %cst = arith.constant dense<[-1.000000e+00, 0.000000e+00, 2.000000e+00, 2.14748365E+9, -2.14748365E+9]> : tensor<5xf32>
+
 // CHECK-LABEL: @ConstantFoldFullyConnectedSmall
 func.func @ConstantFoldFullyConnectedSmall() -> tensor<3xf32> {
   %cst_input = arith.constant dense<[2.0, 3.0]> : tensor<2xf32>
@@ -942,3 +960,37 @@ func.func @ConstFoldEmbeddingLookup() -> (tensor<5x2xf32>, tensor<3x2x2xf32>) {
   // CHECK-DAG: %[[LOOKUP1:.*]] = arith.constant dense<{{\[\[\[}}1.000000e+00, 2.000000e+00], [3.000000e+00, 4.000000e+00]], {{\[\[}}5.000000e+00, 6.000000e+00], [7.000000e+00, 8.000000e+00]], {{\[\[}}1.000000e+00, 2.000000e+00], [3.000000e+00, 4.000000e+00]]]> : tensor<3x2x2xf32>
   // CHECK: return %[[LOOKUP0]], %[[LOOKUP1]] : tensor<5x2xf32>, tensor<3x2x2xf32>
 }
+// CHECK-LABEL: floor
+func.func @floor() -> tensor<3xf32> {
+  %cst = arith.constant dense<[-1.0, 0.0, 0.99]> : tensor<3xf32>
+  %0 = "tfl.floor"(%cst) : (tensor<3xf32>) -> tensor<3xf32>
+  func.return %0 : tensor<3xf32>
+}
+
+// CHECK: %cst = arith.constant dense<[-1.000000e+00, 0.000000e+00, 0.000000e+00]> : tensor<3xf32>
+
+// CHECK-LABEL: exp
+func.func @exp() -> tensor<4xf32> {
+  %cst = arith.constant dense<[-1.0, 0.0, 0.99, 0.36787944117]> : tensor<4xf32>
+  %0 = "tfl.exp"(%cst) : (tensor<4xf32>) -> tensor<4xf32>
+  func.return %0 : tensor<4xf32>
+}
+
+// CHECK: %cst = arith.constant dense<[0.36787945, 1.000000e+00, 2.69123459, 1.44466782]> : tensor<4xf32>
+// CHECK-LABEL: logical_not
+func.func @logical_not() -> tensor<3xi1> {
+  %cst = arith.constant dense<[false, true, false]> : tensor<3xi1>
+  %0 = "tfl.logical_not"(%cst) : (tensor<3xi1>) -> tensor<3xi1>
+  func.return %0 : tensor<3xi1>
+}
+
+// CHECK: %cst = arith.constant dense<[true, false, true]> : tensor<3xi1>
+
+// CHECK-LABEL: logical_not_splat
+func.func @logical_not_splat() -> tensor<3xi1> {
+  %cst = arith.constant dense<false> : tensor<3xi1>
+  %0 = "tfl.logical_not"(%cst) : (tensor<3xi1>) -> tensor<3xi1>
+  func.return %0 : tensor<3xi1>
+}
+
+// CHECK: %cst = arith.constant dense<true> : tensor<3xi1>

@@ -21,6 +21,7 @@ limitations under the License.
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <iterator>
 #include <numeric>
 #include <optional>
@@ -33,16 +34,19 @@ limitations under the License.
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/FloatingPointMode.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/Threading.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
+#include "mlir/Dialect/Traits.h"  // from @llvm-project
 #include "mlir/IR/Attributes.h"  // from @llvm-project
 #include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
@@ -54,6 +58,7 @@ limitations under the License.
 #include "mlir/IR/PatternMatch.h"  // from @llvm-project
 #include "mlir/IR/TypeUtilities.h"  // from @llvm-project
 #include "mlir/IR/Types.h"  // from @llvm-project
+#include "mlir/IR/Value.h"  // from @llvm-project
 #include "mlir/Support/LLVM.h"  // from @llvm-project
 #include "mlir/Support/LogicalResult.h"  // from @llvm-project
 #include "mlir/Transforms/FoldUtils.h"  // from @llvm-project
@@ -807,6 +812,59 @@ int64_t AddOp::GetArithmeticCount(Operation* op) {
   if (ArithmeticCountUtilHelper::GetFirstOutputCount(op, &count)) return count;
 
   return -1;
+}
+
+//===----------------------------------------------------------------------===//
+// FloorOp
+//===----------------------------------------------------------------------===//
+
+OpFoldResult FloorOp::fold(FoldAdaptor adaptor) {
+  auto operands = adaptor.getOperands();
+  auto result_type = getType();
+  if (!IsF32ShapedType(result_type)) return {};
+
+  auto compute = [](APFloat value) -> APFloat {
+    float f = value.convertToFloat();
+    float result = std::floor(f);
+    return APFloat(result);
+  };
+
+  return ConstFoldUnaryOp(result_type, operands[0], compute);
+}
+
+//===----------------------------------------------------------------------===//
+// ExpOp
+//===----------------------------------------------------------------------===//
+
+OpFoldResult ExpOp::fold(FoldAdaptor adaptor) {
+  auto operands = adaptor.getOperands();
+  auto result_type = getType();
+  if (!IsF32ShapedType(result_type)) return {};
+
+  auto compute = [](APFloat value) -> APFloat {
+    float f = value.convertToFloat();
+    float result = std::exp(f);
+    return APFloat(result);
+  };
+
+  return ConstFoldUnaryOp(result_type, operands[0], compute);
+}
+
+//===----------------------------------------------------------------------===//
+// LogicalNotOp
+//===----------------------------------------------------------------------===//
+
+OpFoldResult LogicalNotOp::fold(FoldAdaptor adaptor) {
+  auto data = llvm::dyn_cast_or_null<DenseIntElementsAttr>(adaptor.getLhs());
+  if (!data) {
+    return {};
+  }
+
+  auto compute = [](bool value) { return !value; };
+
+  return DenseIntElementsAttr::get(
+      data.getType(),
+      llvm::to_vector(llvm::map_range(data.getValues<bool>(), compute)));
 }
 
 //===----------------------------------------------------------------------===//
@@ -3191,35 +3249,12 @@ void ConstOp::getCanonicalizationPatterns(RewritePatternSet& results,
 // CastOp
 //===----------------------------------------------------------------------===//
 
-OpFoldResult CastOp::fold(FoldAdaptor adaptor) {
-  auto operands = adaptor.getOperands();
-  assert(operands.size() == 1);
-  if (getInput().getType() == getType()) {
-    return getInput();
-  }
-
-  // For now, only supports cast between integer types.
-  auto elements_attr = operands[0].dyn_cast_or_null<DenseIntElementsAttr>();
-  if (!elements_attr) {
-    return nullptr;
-  }
-
-  auto result_element_type =
-      getType().cast<ShapedType>().getElementType().dyn_cast<IntegerType>();
-  auto operand_element_type = getInput()
-                                  .getType()
-                                  .cast<ShapedType>()
-                                  .getElementType()
-                                  .dyn_cast<IntegerType>();
-  // Returns nullptr if either result/operand element type is not integer.
-  if (!result_element_type || !operand_element_type) {
-    return nullptr;
-  }
-
-  const bool is_unsigned = operand_element_type.isUnsigned();
-  const bool involves_bool = operand_element_type.getWidth() == 1 ||
-                             result_element_type.getWidth() == 1;
-  const int output_bitwidth = result_element_type.getWidth();
+OpFoldResult CastIntToInt(DenseIntElementsAttr data, IntegerType in_type,
+                          IntegerType out_type) {
+  const bool is_unsigned = in_type.isUnsigned();
+  const bool involves_bool =
+      in_type.getWidth() == 1 || out_type.getWidth() == 1;
+  const int output_bitwidth = out_type.getWidth();
   // The integer cast op is the same as C integer cast. Depends on the operand
   // type's signedness, we will determine whether or not sign extension is
   // needed.
@@ -3230,13 +3265,88 @@ OpFoldResult CastOp::fold(FoldAdaptor adaptor) {
       // true input should always be cast to 1 and not -1 as the sign extension
       // would do for signed outputs. Similarly, non-zero inputs should be cast
       // to true. Truncating even numbers to one bit will result in `false`.
-      return APInt(result_element_type.getWidth(), value != 0);
+      return APInt(out_type.getWidth(), value != 0);
     }
     return is_unsigned ? value.zextOrTrunc(output_bitwidth)
                        : value.sextOrTrunc(output_bitwidth);
   };
 
-  return elements_attr.mapValues(result_element_type, cast);
+  return data.mapValues(out_type, cast);
+}
+
+OpFoldResult CastFloatToInt(DenseFPElementsAttr data, FloatType in_type,
+                            IntegerType out_type) {
+  const bool from_f32 = in_type.isF32();
+  const bool to_i32 = out_type.isSignlessInteger(32);
+  if (!from_f32 || !to_i32) {
+    return {};
+  }
+
+  auto cast = [&](APFloat value) -> APInt {
+    APSInt result(32, false);
+    bool is_exact;
+    value.convertToInteger(result, llvm::RoundingMode::TowardZero, &is_exact);
+    return result;
+  };
+
+  return data.mapValues(out_type, cast);
+}
+
+OpFoldResult CastIntToFloat(DenseIntElementsAttr data, IntegerType in_type,
+                            FloatType out_type) {
+  const bool from_i32 = in_type.isSignlessInteger(32);
+  const bool to_f32 = out_type.isF32();
+  if (!from_i32 || !to_f32) {
+    return {};
+  }
+
+  llvm::SmallVector<float> out_arr;
+  for (auto it = data.value_begin<int32_t>(); it < data.value_end<int32_t>();
+       ++it) {
+    out_arr.push_back(static_cast<float>(*it));
+  }
+
+  return DenseFPElementsAttr::get(data.getType().clone(out_type), out_arr);
+}
+
+OpFoldResult CastOp::fold(FoldAdaptor adaptor) {
+  auto operands = adaptor.getOperands();
+  if (operands.size() != 1) {
+    return {};
+  }
+  if (getInput().getType() == getType()) {
+    return getInput();
+  }
+
+  auto input = operands[0];
+
+  auto in_type = getInput().getType().getElementType();
+  auto out_type = getType().getElementType();
+
+  if (auto int_in_type = llvm::dyn_cast_or_null<IntegerType>(in_type)) {
+    auto in_data = llvm::dyn_cast_or_null<DenseIntElementsAttr>(input);
+    if (!in_data) {
+      return {};
+    }
+    if (auto float_out_type = llvm::dyn_cast_or_null<FloatType>(out_type)) {
+      return CastIntToFloat(in_data, int_in_type, float_out_type);
+    }
+    if (auto int_out_type = llvm::dyn_cast_or_null<IntegerType>(out_type)) {
+      return CastIntToInt(in_data, int_in_type, int_out_type);
+    }
+  }
+
+  if (auto float_in_type = llvm::dyn_cast_or_null<FloatType>(in_type)) {
+    auto in_data = llvm::dyn_cast_or_null<DenseFPElementsAttr>(input);
+    if (!in_data) {
+      return {};
+    }
+    if (auto int_out_type = llvm::dyn_cast_or_null<IntegerType>(out_type)) {
+      return CastFloatToInt(in_data, float_in_type, int_out_type);
+    }
+  }
+
+  return {};
 }
 
 //===----------------------------------------------------------------------===//
