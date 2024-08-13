@@ -353,11 +353,19 @@ class RaggedTensorFromVariantOp : public OpKernel {
   }
 };
 
-#define REGISTER_KERNELS_WITH_SPLIT_TYPE(value_type, split_type)      \
-  REGISTER_KERNEL_BUILDER(Name("RaggedTensorFromVariant")             \
-                              .Device(DEVICE_CPU)                     \
-                              .TypeConstraint<value_type>("Tvalues")  \
-                              .TypeConstraint<split_type>("Tsplits"), \
+#define REGISTER_KERNELS_WITH_SPLIT_TYPE(value_type, split_type)             \
+  REGISTER_KERNEL_BUILDER(Name("RaggedTensorFromVariant")                    \
+                              .Device(DEVICE_CPU)                            \
+                              .TypeConstraint<value_type>("Tvalues")         \
+                              .TypeConstraint<split_type>("Tsplits"),        \
+                          RaggedTensorFromVariantOp<value_type, split_type>) \
+  REGISTER_KERNEL_BUILDER(Name("RaggedTensorFromVariant")                    \
+                              .Device(DEVICE_GPU)                            \
+                              .TypeConstraint<value_type>("Tvalues")         \
+                              .TypeConstraint<split_type>("Tsplits")         \
+                              .HostMemory("encoded_ragged")                  \
+                              .HostMemory("output_nested_splits")            \
+                              .HostMemory("output_dense_values"),            \
                           RaggedTensorFromVariantOp<value_type, split_type>);
 #define REGISTER_KERNELS(value_type)                  \
   REGISTER_KERNELS_WITH_SPLIT_TYPE(value_type, int32) \
