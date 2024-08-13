@@ -166,9 +166,9 @@ DebugOptions DefaultDebugOptionsIgnoringFlags() {
   opts.set_xla_gpu_enable_highest_priority_async_stream(true);
 
   opts.set_xla_gpu_enable_pipelined_collectives(false);
-  opts.set_xla_gpu_enable_pipelined_all_reduce(false);
-  opts.set_xla_gpu_enable_pipelined_all_gather(false);
-  opts.set_xla_gpu_enable_pipelined_reduce_scatter(false);
+  opts.set_xla_gpu_enable_pipelined_all_reduce(true);
+  opts.set_xla_gpu_enable_pipelined_all_gather(true);
+  opts.set_xla_gpu_enable_pipelined_reduce_scatter(true);
   opts.set_xla_gpu_enable_pipelined_p2p(false);
 
   opts.set_xla_gpu_run_post_layout_collective_pipeliner(false);
