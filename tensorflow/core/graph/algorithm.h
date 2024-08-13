@@ -28,6 +28,13 @@ namespace tensorflow {
 // Comparator for two nodes. This is used in order to get a stable ording.
 using NodeComparator = std::function<bool(const Node*, const Node*)>;
 
+// Give a score for emitting a node at the current position.
+// The "previous" node is also passed for orderings that want
+// to optimize some relationship between neighbors. (E.g., minimize
+// the number of adjacent nodes on different devices)
+using NodeScorer =
+    std::function<int(const Node* previous, const Node* candidate)>;
+
 using EdgeFilter = std::function<bool(const Edge&)>;
 
 // Compares two node based on their ids.
@@ -43,6 +50,28 @@ struct NodeComparatorName {
     return n1->name() < n2->name();
   }
 };
+
+struct NodeScorerDevice {
+  int operator()(const Node* previous, const Node* candidate) const {
+    if (previous &&
+        previous->requested_device() == candidate->requested_device()) {
+      return 1;
+    }
+    return 0;
+  }
+};
+
+// Performs a topological ordering of nodes.
+// This has the property that any child node of a parent node c is
+// emitted before p. A scoring function is used to break ties if
+// multiple child nodes (of possibly different parents) are ready
+// to be emitted at some point. Due to the large degree of freedom
+// we have during topolocal ordering, said scoring function can
+// be used to establish certain properties in the output, like e.g.
+// clustering by device. The "emit" function is called once for each
+// node.
+void TopologicalOrdering(const Graph& g, const std::function<void(Node*)>& emit,
+                         const NodeScorer& scorer);
 
 // Perform a depth-first-search on g starting at the source node.
 // If enter is not empty, calls enter(n) before visiting any children of n.

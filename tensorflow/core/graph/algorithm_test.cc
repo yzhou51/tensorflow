@@ -40,6 +40,7 @@ REGISTER_OP("TestParams").Output("o: float");
 REGISTER_OP("TestInput").Output("a: float").Output("b: float");
 REGISTER_OP("TestMul").Input("a: float").Input("b: float").Output("o: float");
 REGISTER_OP("TestUnary").Input("a: float").Output("o: float");
+REGISTER_OP("TestTwoOutputs").Output("a: float").Output("b: float");
 REGISTER_OP("TestBinary")
     .Input("a: float")
     .Input("b: float")
@@ -75,6 +76,187 @@ bool ExpectBefore(const std::vector<std::pair<string, string>>& ordered_pairs,
   }
 
   return true;
+}
+
+TEST(AlgorithmTest, TopologicalOrdering) {
+  GraphDefBuilder b(GraphDefBuilder::kFailImmediately);
+  using namespace ::tensorflow::ops;  // NOLINT(build/namespaces)
+  Node* n1 = SourceOp("TestParams", b.opts().WithName("n1"));
+  Node* n2 =
+      SourceOp("TestParams", b.opts().WithName("n2").WithControlInput(n1));
+  Node* n3 =
+      SourceOp("TestParams", b.opts().WithName("n3").WithControlInput(n2));
+  Node* n4 = BinaryOp("TestMul", n1, {n3, 0}, b.opts().WithName("n4"));
+  Node* n5 = BinaryOp("TestMul", n1, {n3, 0},
+                      b.opts().WithName("n5").WithControlInput(n1));
+  Node* n6 = BinaryOp("TestMul", n2, {n3, 0}, b.opts().WithName("n6"));
+  n3->set_requested_device("a");
+  n4->set_requested_device("a");
+  n5->set_requested_device("b");
+  n6->set_requested_device("b");
+
+  Graph g(OpRegistry::Global());
+  TF_ASSERT_OK(GraphDefBuilderToGraph(b, &g));
+
+  std::vector<Node*> order;
+
+  NodeScorerDevice device;
+  TopologicalOrdering(g, [&](Node* n) { order.push_back(n); }, device);
+
+  std::vector<std::pair<string, string>> desired_order = {
+      {"n1", "n2"},  // because of control dependency
+      {"n2", "n3"},  // because of control dependency
+      {"n3", "n4"},  // because of NodeScorerDevice
+      {"n1", "n4"},  // data dependency
+      {"n1", "n5"},  // data dependency
+      {"n2", "n6"},  // data dependency
+      {"n3", "n4"},  // data dependency
+      {"n3", "n5"},  // data dependency
+      {"n3", "n6"},  // data dependency
+  };
+  string error;
+  EXPECT_TRUE(ExpectBefore(desired_order, order, &error)) << error;
+}
+
+TEST(AlgorithmTest, TopologicalOrderingOnShallowTree) {
+  GraphDefBuilder b(GraphDefBuilder::kFailImmediately);
+  using namespace ::tensorflow::ops;  // NOLINT(build/namespaces)
+  Node* n1 = SourceOp("TestParams", b.opts().WithName("n1").WithDevice("a"));
+  Node* n2 =
+      SourceOp("TestParams",
+               b.opts().WithName("n2").WithDevice("b").WithControlInput(n1));
+  Node* n3 =
+      SourceOp("TestParams",
+               b.opts().WithName("n3").WithDevice("c").WithControlInput(n2));
+  Node* n4 =
+      SourceOp("TestParams",
+               b.opts().WithName("n4").WithDevice("a").WithControlInput(n1));
+  Node* n5 =
+      SourceOp("TestParams",
+               b.opts().WithName("n5").WithDevice("b").WithControlInput(n2));
+  Node* n6 =
+      SourceOp("TestParams",
+               b.opts().WithName("n6").WithDevice("c").WithControlInput(n3));
+  Node* n7 =
+      SourceOp("TestParams",
+               b.opts().WithName("n7").WithDevice("a").WithControlInput(n4));
+  Node* n8 =
+      SourceOp("TestParams",
+               b.opts().WithName("n8").WithDevice("b").WithControlInput(n5));
+  Node* n9 =
+      SourceOp("TestParams",
+               b.opts().WithName("n9").WithDevice("c").WithControlInput(n6));
+
+  Graph g(OpRegistry::Global());
+  TF_ASSERT_OK(GraphDefBuilderToGraph(b, &g));
+
+  std::vector<Node*> order;
+
+  NodeScorerDevice device;
+  TopologicalOrdering(g, [&](Node* n) { order.push_back(n); }, device);
+
+  std::vector<Node*> desired_order = {
+      g.source_node(), n1, n4, n7, n2, n5, n8, n3, n6, n9, g.sink_node()};
+  for (int i = 0; i < desired_order.size(); i++) {
+    desired_order[i] = g.FindNodeId(desired_order[i]->id());
+  }
+  EXPECT_EQ(order, desired_order);
+}
+
+TEST(AlgorithmTest, TopologicalOrderingWithCustomScoring) {
+  GraphDefBuilder b(GraphDefBuilder::kFailImmediately);
+  using namespace ::tensorflow::ops;  // NOLINT(build/namespaces)
+  Node* n1 = SourceOp("TestParams", b.opts().WithName("n1"));
+  Node* n2 = SourceOp("TestParams", b.opts().WithName("n2"));
+  Node* n3 = SourceOp("TestParams", b.opts().WithName("n3"));
+  Node* n4 = SourceOp("TestParams", b.opts().WithName("n4"));
+  Node* n5 = SourceOp("TestParams", b.opts().WithName("n5"));
+  Node* n6 = SourceOp("TestParams", b.opts().WithName("n6"));
+  Node* n7 = SourceOp("TestParams", b.opts().WithName("n7"));
+  Node* n8 = SourceOp("TestParams", b.opts().WithName("n8"));
+  Node* n9 = SourceOp("TestParams", b.opts().WithName("n9"));
+
+  Graph g(OpRegistry::Global());
+  TF_ASSERT_OK(GraphDefBuilderToGraph(b, &g));
+
+  std::vector<Node*> order;
+
+  TopologicalOrdering(
+      g, [&](Node* n) { order.push_back(n); },
+      [&](const Node* previous, const Node* candidate) {
+        // Convert the node ID to a score, with lower numbers being emitted
+        // first.
+        return -stoi(candidate->name().substr(1));
+      });
+
+  std::vector<Node*> desired_order = {
+      g.source_node(), n1, n2, n3, n4, n5, n6, n7, n8, n9, g.sink_node()};
+  for (int i = 0; i < desired_order.size(); i++) {
+    desired_order[i] = g.FindNodeId(desired_order[i]->id());
+  }
+  EXPECT_EQ(order, desired_order);
+}
+
+TEST(AlgorithmTest, TopologicalOrderingOnChain) {
+  GraphDefBuilder b(GraphDefBuilder::kFailImmediately);
+  using namespace ::tensorflow::ops;  // NOLINT(build/namespaces)
+  Node* n1 = SourceOp("TestParams", b.opts().WithName("n1"));
+  Node* n2 = UnaryOp("TestUnary", n1, b.opts().WithName("n2"));
+  Node* n3 = UnaryOp("TestUnary", n2, b.opts().WithName("n3"));
+  Node* n4 = UnaryOp("TestUnary", n3, b.opts().WithName("n4"));
+  Node* n5 = UnaryOp("TestUnary", n4, b.opts().WithName("n5"));
+  Node* n6 = UnaryOp("TestUnary", n5, b.opts().WithName("n6"));
+
+  Graph g(OpRegistry::Global());
+  TF_ASSERT_OK(GraphDefBuilderToGraph(b, &g));
+
+  std::vector<Node*> order;
+  TopologicalOrdering(
+      g, [&](Node* n) { order.push_back(n); },
+      [&](const Node* previous, const Node* candidate) {
+        if (candidate->id() == n2->id()) {
+          EXPECT_EQ(previous->id(), n1->id());
+        }
+        if (candidate->id() == n3->id()) {
+          EXPECT_EQ(previous->id(), n2->id());
+        }
+        if (candidate->id() == n4->id()) {
+          EXPECT_EQ(previous->id(), n3->id());
+        }
+        if (candidate->id() == n5->id()) {
+          EXPECT_EQ(previous->id(), n4->id());
+        }
+        if (candidate->id() == n6->id()) {
+          EXPECT_EQ(previous->id(), n5->id());
+        }
+        return 0;
+      });
+}
+
+TEST(AlgorithmTest, TopologicalOrderingOnMultipleOutputs) {
+  GraphDefBuilder b(GraphDefBuilder::kFailImmediately);
+  using namespace ::tensorflow::ops;  // NOLINT(build/namespaces)
+  Node* n1 = SourceOp("TestTwoOutputs", b.opts().WithName("n1"));
+  UnaryOp("TestUnary", {n1, 0}, b.opts().WithName("n2"));
+  UnaryOp("TestUnary", {n1, 1}, b.opts().WithName("n3"));
+  UnaryOp("TestUnary", {n1, 0}, b.opts().WithName("n4"));
+  UnaryOp("TestUnary", {n1, 1}, b.opts().WithName("n5"));
+
+  Graph g(OpRegistry::Global());
+  TF_ASSERT_OK(GraphDefBuilderToGraph(b, &g));
+
+  std::vector<Node*> order;
+  TopologicalOrdering(
+      g, [&](Node* n) { order.push_back(n); }, NodeScorerDevice());
+
+  std::vector<std::pair<string, string>> desired_order = {
+      {"n1", "n2"},
+      {"n1", "n3"},
+      {"n1", "n4"},
+      {"n1", "n5"},
+  };
+  string error;
+  EXPECT_TRUE(ExpectBefore(desired_order, order, &error)) << error;
 }
 
 TEST(AlgorithmTest, ReversePostOrder) {
