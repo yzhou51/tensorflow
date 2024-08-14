@@ -1,4 +1,4 @@
-/* Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2024 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,12 +12,19 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-/// \file
-///
-/// Memory management for TF Lite.
-#ifndef TENSORFLOW_LITE_ALLOCATION_H_
-#define TENSORFLOW_LITE_ALLOCATION_H_
 
-#include "tensorflow/compiler/mlir/lite/allocation.h"
+#ifndef XLA_STREAM_EXECUTOR_STREAM_FINDER_H_
+#define XLA_STREAM_EXECUTOR_STREAM_FINDER_H_
 
-#endif  // TENSORFLOW_LITE_ALLOCATION_H_
+#include "absl/status/statusor.h"
+#include "xla/stream_executor/platform.h"
+#include "xla/stream_executor/stream.h"
+
+namespace stream_executor {
+
+// Returns a Stream given the gpu_stream handle.
+absl::StatusOr<Stream*> FindStream(Platform* platform, void* gpu_stream);
+
+}  // namespace stream_executor
+
+#endif  // XLA_STREAM_EXECUTOR_STREAM_FINDER_H_
